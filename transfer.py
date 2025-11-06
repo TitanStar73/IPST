@@ -282,7 +282,7 @@ def main():
         print('Input:', args.content_video, args.style_image)
         
         reader = io.VideoReader(args.content_video)
-        fps = reader.get_metadata()['video']['fps'][0]
+        fps = float(reader.get_metadata()['video']['fps'][0])
         bit_rate = av.open(args.content_video).streams.video[0].bit_rate
 
         mean = torch.tensor([0.485, 0.456, 0.406])
