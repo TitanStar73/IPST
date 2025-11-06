@@ -8,7 +8,6 @@ from torchvision import transforms, models
 import os
 import numpy as np
 from PIL import Image
-import matplotlib.pyplot as plt 
 import argparse
 import torchvision.io as io
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -236,7 +235,10 @@ def main():
         result = im_convert(ipst.transfer())
 
         print('Saving')
-        plt.imsave(os.path.join(output_folder, os.path.basename(args.content_image)), result, dpi=dpi)
+
+        result_bgr = cv2.cvtColor((result * 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+        cv2.imwrite(os.path.join(output_folder, os.path.basename(args.content_image)), result_bgr)
+
 
     
     elif args.content_video and args.style_image:
