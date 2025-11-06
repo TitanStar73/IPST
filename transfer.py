@@ -15,12 +15,18 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import av
 
+import cv2
+import torch
+import numpy as np
+from typing import Any, Dict, Optional
+
 def write_video(
     filename: str,
     video_array: torch.Tensor,
     fps: float,
-    bit_rate: int,
-    video_codec: str = "libx264",
+    video_codec: str = "mp4v",
+    # The following arguments are kept for compatibility but are not used by this OpenCV-based function.
+    bit_rate: Optional[int] = None,
     options: Optional[Dict[str, Any]] = None,
     audio_array: Optional[torch.Tensor] = None,
     audio_fps: Optional[float] = None,
@@ -28,79 +34,40 @@ def write_video(
     audio_options: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
-    Writes a 4d tensor in [T, H, W, C] format in a video file
+    Writes a 4d tensor in [T, H, W, C] format into a video file using OpenCV.
+
+    NOTE: This implementation does not handle audio. Audio arguments are ignored.
 
     Args:
-        filename (str): path where the video will be saved
-        video_array (Tensor[T, H, W, C]): tensor containing the individual frames,
-            as a uint8 tensor in [T, H, W, C] format
-        fps (Number): video frames per second
-        video_codec (str): the name of the video codec, i.e. "libx264", "h264", etc.
-        options (Dict): dictionary containing options to be passed into the PyAV video stream
-        audio_array (Tensor[C, N]): tensor containing the audio, where C is the number of channels
-            and N is the number of samples
-        audio_fps (Number): audio sample rate, typically 44100 or 48000
-        audio_codec (str): the name of the audio codec, i.e. "mp3", "aac", etc.
-        audio_options (Dict): dictionary containing options to be passed into the PyAV audio stream
+        filename (str): Path where the video will be saved.
+        video_array (Tensor[T, H, W, C]): A tensor of frames, assumed to be in uint8 format and RGB channel order.
+        fps (float): Video frames per second.
+        video_codec (str): The FourCC code for the video codec (e.g., "mp4v", "XVID", "H264").
+                           'mp4v' is a good default for .mp4 files.
     """
-    # if not torch.jit.is_scripting() and not torch.jit.is_tracing():
-    #     _log_api_usage_once(write_video)
-    # _check_av_available()
-    video_array = torch.as_tensor(video_array, dtype=torch.uint8).numpy()
+    # Ensure the tensor is on the CPU and in numpy format, with uint8 data type.
+    video_array_numpy = video_array.cpu().to(torch.uint8).numpy()
 
-    # PyAV does not support floating point numbers with decimal point
-    # and will throw OverflowException in case this is not the case
-    fps = np.round(fps)
+    # Get video dimensions.
+    num_frames, height, width, _ = video_array_numpy.shape
 
-    with av.open(filename, mode="w") as container:
-        stream = container.add_stream(video_codec, rate=fps, bit_rate=bit_rate)
-        stream.width = video_array.shape[2]
-        stream.height = video_array.shape[1]
-        stream.pix_fmt = "yuv420p" if video_codec != "libx264rgb" else "rgb24"
-        stream.options = options or {}
+    # Define the codec and create VideoWriter object.
+    # The FourCC code is a 4-byte code used to specify the video codec.
+    fourcc = cv2.VideoWriter_fourcc(*video_codec)
+    out = cv2.VideoWriter(filename, fourcc, fps, (width, height))
 
-        if audio_array is not None:
-            audio_format_dtypes = {
-                "dbl": "<f8",
-                "dblp": "<f8",
-                "flt": "<f4",
-                "fltp": "<f4",
-                "s16": "<i2",
-                "s16p": "<i2",
-                "s32": "<i4",
-                "s32p": "<i4",
-                "u8": "u1",
-                "u8p": "u1",
-            }
-            a_stream = container.add_stream(audio_codec, rate=audio_fps)
-            a_stream.options = audio_options or {}
+    if not out.isOpened():
+        print(f"Error: Could not open video writer for path {filename}")
+        return
 
-            num_channels = audio_array.shape[0]
-            audio_layout = "stereo" if num_channels > 1 else "mono"
-            audio_sample_fmt = container.streams.audio[0].format.name
+    # Loop through all the frames and write them to the file.
+    for frame_rgb in video_array_numpy:
+        # OpenCV expects images in BGR format, so we need to convert from RGB.
+        frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+        out.write(frame_bgr)
 
-            format_dtype = np.dtype(audio_format_dtypes[audio_sample_fmt])
-            audio_array = torch.as_tensor(audio_array).numpy().astype(format_dtype)
-
-            frame = av.AudioFrame.from_ndarray(audio_array, format=audio_sample_fmt, layout=audio_layout)
-
-            frame.sample_rate = audio_fps
-
-            for packet in a_stream.encode(frame):
-                container.mux(packet)
-
-            for packet in a_stream.encode():
-                container.mux(packet)
-
-        for img in video_array:
-            frame = av.VideoFrame.from_ndarray(img, format="rgb24")
-            frame.pict_type = "NONE"
-            for packet in stream.encode(frame):
-                container.mux(packet)
-
-        # Flush stream
-        for packet in stream.encode():
-            container.mux(packet)
+    # Release the VideoWriter object.
+    out.release()
 
 
 def load_image(img_path):
